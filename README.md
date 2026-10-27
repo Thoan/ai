@@ -1,4 +1,4 @@
-# ai-skills
+# ai
 
 Reusable skills, prompts and notes for working with AI coding agents. Organized
 by harness so the repo can grow beyond a single tool or model.
