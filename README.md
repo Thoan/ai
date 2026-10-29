@@ -8,7 +8,7 @@ work runs on a machine you never look at.
 ```
 skills/
   orchestration/SKILL.md    # the router: the main thread plans, delegates, relays, never works
-  land/SKILL.md             # generic ship flow the lander runs (test → bump → deploy → merge → push)
+  land/SKILL.md             # generic ship flow the lander runs (test → bump → deploy → PR → merge)
 agents/                     # the subagent roster the router spawns
   planner.md  researcher.md  implementer.md  implementer-opus.md
   reviewer.md  integrator.md  lander.md  cleaner.md
@@ -28,7 +28,8 @@ menu and fix the score overlay". Then the session:
 3. has a separate **reviewer** check every lane against a verifiable done-criterion,
 4. **integrates** the lanes and runs the full test suite,
 5. **lands** the work: bumps the version, **deploys it somewhere your phone can reach**
-   (OTA install, TestFlight, a preview URL), merges and pushes,
+   (OTA install, TestFlight, a preview URL), then opens a pull request and merges it
+   once its checks pass. Nothing is ever pushed straight to `main`,
 6. **cleans up** every simulator, worktree, build cache, screenshot and process the run
    created,
 7. sends you a few lines of status: what shipped, which version is on your phone, how many
@@ -102,7 +103,7 @@ Questions the planner can't answer from the code (product decisions) come to you
 | 3 Fan out | `implementer` / `implementer-opus` | every lane in a parallel group is spawned in one message; each makes its own worktree + `lane/<id>` branch, implements, runs the real tests, commits | `A running · B running` |
 | 4 Review | `reviewer` | runs the tests itself, checks DONE WHEN + repo invariants; findings go back to the same implementer (max 2 rounds) | `A done, 42 tests green → reviewing` |
 | 5 Integrate | `integrator` | merges lanes in dependency order, full test run, removes merged worktrees + branches | `integrated on feat/x, 118 tests green` |
-| 6 Land | `lander` | runs the repo's ship recipe (`/land`): green gate → bump → deploy → patch notes → merge → push | `landed 0.4.2, on your phone` |
+| 6 Land | `lander` | runs the repo's ship recipe (`/land`): green gate → bump → deploy → patch notes → PR → merge when checks pass | `landed 0.4.2 (PR #12), on your phone` |
 | 7 Relay | router | makes sure you have the version, where to see it, and the final test result; for a visual change with no deploy path, sends 1–2 screenshots | the proof |
 | 8 Clean up | `cleaner` | deletes the run's simulators, worktrees, lane branches, worktree build caches, scratch, processes — **always**, even on an abandoned run | `cleaned: 2 simulators, 1.4 GB` |
 | 9 Report | router | what landed, version + where, what was freed, open issues | a few lines |
@@ -214,7 +215,7 @@ ship" if you want it to stop after integration. The cleanup step still runs.
 | `implementer-opus` | opus / medium | full edit | a lane that needs judgment (tricky refactors, concurrency, gnarly bugs) |
 | `reviewer` | opus / high | read + run tests | APPROVE / CHANGES REQUESTED / BLOCK, findings with file:line and expected fix |
 | `integrator` | opus / high | full edit | merges lanes, fixes mechanical breakage, full test run, removes worktrees |
-| `lander` | sonnet / medium | full edit + Skill | runs `/land`: gate, bump, deploy, notes, state file, merge, push |
+| `lander` | sonnet / medium | full edit + Skill | runs `/land`: gate, bump, deploy, notes, state file, PR, merge |
 | `cleaner` | sonnet / low | read + Bash | final sweep, reports what it freed and anything it left on purpose |
 
 The router can override `model` per spawn when a lane is harder or easier than usual.
@@ -281,7 +282,28 @@ The router can override `model` per spawn when a lane is harder or easier than u
   it can't attribute to a run. Ask the session for a one-off sweep: list them with sizes
   first, then delete what you approve.
 
-## Contributing / reuse
+## Contributing
+
+`main` is protected: **every change goes through a pull request**, and nothing can be pushed
+to it directly, force-pushed or deleted, by anyone, the owner included. A PR can merge only when
+the `sensitive-check` workflow passes. It fails on:
+
+- a commit whose author or committer email isn't a GitHub noreply address,
+- added content with an email address (other than GitHub/Anthropic noreply), a local home path
+  like `/Users/<name>`, or an Apple device / simulator id,
+- secrets, via [gitleaks](https://github.com/gitleaks/gitleaks). GitHub secret scanning with
+  push protection is also on.
+
+PRs merge by rebase, so commits land exactly as written.
+
+To catch these before you push, enable the bundled pre-commit hook once per clone:
+
+```sh
+git config user.email "<id>+<login>@users.noreply.github.com"   # github.com/settings/emails
+git config core.hooksPath .githooks                               # runs scripts/check-sensitive.sh
+```
+
+## License / reuse
 
 MIT licensed. Use it at work, fork it, change it. See [LICENSE](LICENSE). When a skill is
 ported to another harness or tuned for a different model, put it in `harnesses/<harness>/`
