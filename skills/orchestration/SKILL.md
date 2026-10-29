@@ -85,7 +85,7 @@ named in its EVIDENCE line (SendUserFile, by path) is relaying, not reading — 
 | `implementer-opus` | opus/medium, worktree | code lane needing judgment |
 | `reviewer` | opus/high, read-only | verify a lane against its DONE WHEN; your only "verification" |
 | `integrator` | opus/high | merge lane branches, resolve conflicts, full test run, clean worktrees |
-| `lander` | sonnet/medium | run the repo's ship flow (e.g. `/land`): bump, deploy for human review, merge, push |
+| `lander` | sonnet/medium | run the repo's ship flow (e.g. `/land`): bump, deploy for human review, open + merge the PR |
 | `cleaner` | sonnet/low | final sweep: simulators, worktrees, lane branches, build caches, scratch, stray processes |
 
 `general-purpose` / `Explore` are fine for odd jobs that fit no role. Override `model`
@@ -224,6 +224,9 @@ proof. Never a local path the user is expected to open.
   lander and integrator read it, you just make sure they're told to.
 - Finished work gets deployed where the user reviews it and the version named, when the repo
   supports it. "Not deployable" must come back from the lander with a reason, and you relay it.
+- **Every change lands through a pull request.** No agent pushes to the default branch, merges
+  locally into it, force-pushes or rewrites pushed commits. The lander opens the PR and merges it
+  once checks pass; relay the PR link to the user.
 - Never create GitHub remotes or new repos without the user asking.
 - `.orchestration/` is scratch; the planner adds it to `<repo>/.git/info/exclude` so it is
   never committed. You never open it. The cleaner deletes `<repo>/.orchestration/<slug>/` at

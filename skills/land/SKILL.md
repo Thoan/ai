@@ -1,6 +1,6 @@
 ---
 name: land
-description: Close out a work session in any project — test, bump the version, deploy, write patch notes, refresh the state file, then commit, merge to the default branch and push. Use when the user types /land or says to ship it, land it, wrap up, or deploy the current work.
+description: Close out a work session in any project — test, bump the version, deploy, write patch notes, refresh the state file, then commit, push a branch, open a pull request, and merge it once its checks pass. Never pushes to the default branch directly. Use when the user types /land or says to ship it, land it, wrap up, or deploy the current work.
 user-invocable: true
 allowed-tools:
   - Read
@@ -17,9 +17,13 @@ allowed-tools:
 The project-agnostic version of the per-repo `*-land` skills. Run the steps **in order** —
 the version bump is gated on a green build, and the deploy is gated on the bump.
 
-**`/land` means land it.** Invoking this skill *is* the authorization to commit, merge and
-push. Don't stop at a commit and offer the merge; don't ask whether to push. The only reason
-not to finish is the user explicitly saying "don't push."
+**`/land` means land it.** Invoking this skill *is* the authorization to commit, push the
+branch, open the PR and merge it. Don't stop at a commit and offer the merge; don't ask whether
+to push. The only reason not to finish is the user explicitly saying "don't push" (stop after
+the commit) or "don't merge" (stop at the open PR).
+
+**Every change reaches the default branch through a pull request.** Never `git push` to
+`main`/`master`, never merge locally into it, never force-push or rewrite pushed commits.
 
 Work in the session's cwd (or a project the user names). Use absolute paths.
 
@@ -141,29 +145,37 @@ Write a memory only for a **durable convention or a decision with a why** that t
 doesn't already record. Update an existing memory file rather than adding a near-duplicate.
 **Never record "what shipped"** — that's the state file's job.
 
-## 8. Land it
+## 8. Land it — through a pull request
 
 ```sh
-git add -A && git commit -F -        # subject matching the log's existing style
-git checkout <default-branch>
-git merge --no-ff feature/<branch> -m "Merge feature/<branch> into <default>"
-git push origin <default-branch>
-git branch -d feature/<branch>       # only after the merge succeeds
+git add -A && git commit -F -               # subject matching the log's existing style
+git push -u origin <branch>                 # the feature branch, never the default branch
+gh pr create --base <default-branch> --head <branch> --title "<subject>" --body-file -
+gh pr checks <pr> --watch                   # wait for required checks
+gh pr merge <pr> --rebase --delete-branch   # once green
+git checkout <default-branch> && git pull --ff-only
 ```
 
 - Determine the default branch from `git symbolic-ref refs/remotes/origin/HEAD`, else
   whichever of `main`/`master` exists.
+- **On the default branch with uncommitted work?** Cut `feature/<slug>` first, then commit there.
 - **One commit** for the session's work. Subject in the log's existing style
   (`git log --oneline -5`). Body: what changed and why, plus any measured numbers.
-- Match the repo's merge style from its history — `--no-ff` if that's what it does.
-- Already on the default branch with no feature branch? Just commit and push.
-- No remote? Commit and merge, skip the push, and say there's nowhere to push to.
-- **Stop and report** on a merge conflict or a rejected push. Never force-push, never
+- **PR body:** what changed for the user, the test result (command + pass count), the version
+  and where it's deployed. Keep it readable on a phone.
+- **Merge with `--rebase`** unless the repo's CLAUDE.md says otherwise. It keeps the commits
+  exactly as written (author, email, trailers); a squash or merge commit is re-authored by
+  GitHub and can pick up an email the repo doesn't allow.
+- **Checks red?** Stop, report the failing check and the PR link. Don't merge, don't bypass.
+- **Merge blocked** (required review, branch protection)? Leave the PR open and report the link.
+- **No GitHub remote / no `gh`?** Commit on the branch, push it if there's a remote, and say the
+  PR has to be opened by hand. Never fall back to pushing the default branch.
+- **Stop and report** on a conflict or a rejected push. Never force-push, never
   `git reset` someone else's commits away.
 
 Don't also invoke `/cmp` — this step *is* that flow.
 
 ## 9. Report
 
-Short. What shipped, what's on the device, what's on the default branch, and **anything left
+Short. What shipped, what's on the device, the PR link and whether it merged, and **anything left
 out of scope** the user needs to weigh in on.
