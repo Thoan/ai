@@ -17,11 +17,15 @@ allowed-tools:
 The project-agnostic version of the per-repo `*-land` skills. Run the steps **in order** —
 the version bump is gated on a green build, and the deploy is gated on the bump.
 
-**Deploy early, delete nothing.** The order is gate → bump → patch notes/docs → deploy →
-state file → PR → checks → merge. Deploy (step 5) right after the build-affecting steps 1-4,
-before the PR, any PR wait and any cleanup. This skill deletes no files: every `rm` is an
-approval prompt for a user on their phone. Leave scratch where it is and list it in the
-report; an orchestration run's cleaner removes it last.
+**Deploy early, nothing prompts before it.** The order is gate → bump → patch notes/docs →
+deploy → state file → PR → checks → merge. Deploy (step 5) right after the build-affecting
+steps 1-4, before the PR, any PR wait and any cleanup. Every approval is a prompt for a user on
+their phone, so steps 1-5 run only commands that need none: no `rm` or other delete, no `kill`,
+no `chmod` (run `bash <script>`), no `git push`, `gh pr merge`, `git restore`/`reset`/`rebase`
+or `commit --amend`. A pre-deploy step that would need one is restructured (overwrite instead
+of removing) or reported, never prompted. Push and merge (step 8) come after the deploy. This
+skill deletes no files: leave scratch where it is and list it in the report; under
+`/orchestration` the cleaner removes it once the user has tested.
 
 **Scratch** (logs, build output you capture, helper scripts) goes in one dir: under
 `/orchestration`, the run's SCRATCH dir (`<repo>/.orchestration/<slug>/`); on its own, the fixed
@@ -54,6 +58,10 @@ Everything project-specific comes from the repo, not from this file:
   Some repos' CLAUDE.md just points at their own `/xx-land` skill — if so, use that skill
   instead and say so.
 - **The state file** — `docs/STATE.md`, else `STATE.md`.
+
+The recipe decides *what* runs; the no-prompt rule above decides *when*: a recipe step that
+would prompt before the deploy is substituted (`bash tools/deploy.sh` instead of `chmod +x`,
+overwrite instead of delete) or deferred until after the deploy and reported.
 
 If the repo has no shipping recipe at all, derive what you can (step 1), do the parts that
 apply, and **say plainly which steps you skipped and why**. Don't invent a deploy.
@@ -163,7 +171,7 @@ Write a memory only for a **durable convention or a decision with a why** that t
 doesn't already record. Update an existing memory file rather than adding a near-duplicate.
 **Never record "what shipped"** — that's the state file's job.
 
-## 8. Land it — through a pull request
+## 8. Land it — through a pull request, after the deploy
 
 ```sh
 git add <intended paths>                    # by name — never a blind `git add -A`
@@ -181,8 +189,10 @@ git checkout <default-branch> && git pull --ff-only
   whichever of `main`/`master` exists.
 - **On the default branch with uncommitted work?** Cut `feature/<slug>` first, then commit there.
 - **Stage only intended source changes.** Nothing from `.orchestration/`, no logs, screenshots,
-  `DerivedData/`, build output or temp files. A stray file staged? `git restore --staged <path>`
-  before committing — never commit it and delete it in a follow-up commit.
+  `DerivedData/`, build output or temp files. A new-file stray staged? `git rm -r --cached -q
+  <path>` unstages it and keeps the file (`git restore` prompts). A tracked-file stray that
+  can't be unstaged without a prompt: don't commit it; report it. Never commit a stray and
+  delete it in a follow-up commit.
 - **No stray commits on the PR branch** — no "wip", fixup or scratch commits. The PR carries
   the session's intended commits only (lane commits merged by an integrator are fine).
 - **One commit** for the session's work. Subject in the log's existing style
