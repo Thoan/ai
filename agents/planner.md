@@ -16,8 +16,8 @@ Write the plan to the path the brief names (default: `<repo>/.orchestration/<slu
 - FILES own / do-not-touch, so parallel lanes never edit the same file
 - DEPENDS ON (lane ids), and whether it can run in parallel in a worktree
 - READ FIRST: the paths the lane agent should start from
-Also list: the repo's test/build command, its ship recipe and where it deploys for human review (OTA to the user's phone, TestFlight, a preview URL, or nowhere — the user drives this from the Claude mobile app and never sees this machine, so a deployment is how they review), which lanes will need a Simulator (each lane creates and deletes its own `orch-<slug>-<lane>` one), risks, and open questions that genuinely need the user.
+Also list: the repo's test/build command, its ship recipe and where it deploys for human review (OTA to the user's phone, TestFlight, a preview URL, or nowhere — the user drives this from the Claude mobile app and never sees this machine, so a deployment is how they review), which lanes will need a Simulator (each lane creates its own `orch-<slug>-<lane>` one and shuts it down; the cleaner deletes it), risks, and open questions that genuinely need the user.
 
-Prefer few, fat, independent lanes over many thin ones. Do not edit source. Do not spawn agents.
+Prefer few, fat, independent lanes over many thin ones. Do not edit source. Do not spawn agents. Scratch goes only under `<repo>/.orchestration/<slug>/`, never `/tmp`; delete nothing.
 
 End with a concise report — the router will NOT open PLAN.md, so everything it needs to route must be inline: plan path, lane table (id / agent / one-line goal / depends), parallel-safe groups, questions for the user, the deploy target, and anything you could not determine. End with `LEFT ON MACHINE: <plan dir>` so the cleaner's inventory is complete. For each lane include the ready-to-use brief fields (GOAL, FILES own/do-not-touch, READ FIRST, DONE WHEN, agent, model) so the router can copy them into spawns verbatim.
