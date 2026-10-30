@@ -30,10 +30,11 @@ menu and fix the score overlay". Then the session:
 5. **lands** the work: bumps the version, **deploys it somewhere your phone can reach**
    (OTA install, TestFlight, a preview URL) right after the build-affecting steps, then opens a pull
    request and merges it once its checks pass. Nothing is ever pushed straight to `main`,
-6. **cleans up**, last and in one batch, every simulator, worktree, build cache, screenshot
-   and process the run created,
+6. **cleans up simulators** right after the deploy, in one batch,
 7. sends you a few lines of status: what shipped, which version is on your phone, how many
-   tests passed, what was freed.
+   tests passed, and what is **held** (worktrees, build caches, scratch) and how big,
+8. once you've tested and say **"looks good"**, deletes the rest in one more batch. Found a
+   problem instead? The held worktrees are reused for the fix.
 
 You never open a terminal, a file or a Simulator. Two things make that work:
 
@@ -43,9 +44,10 @@ You never open a terminal, a file or a Simulator. Two things make that work:
   agent's report, with the evidence attached.
 - **It assumes you can't see the machine.** Verification comes back to the chat as text
   (test command, pass count, reviewer verdict). When a change needs your eyes, the run
-  deploys it where you can look at it. And because nobody is watching the disk, the run
-  deletes everything it made — in one batched step at the end, so you approve one prompt, not
-  dozens.
+  deploys it where you can look at it. Nothing that needs your approval (a delete, a push, a
+  merge) runs before the deploy, so the first thing you see is your change, not a prompt. And
+  because nobody is watching the disk, the run deletes everything it made: simulators right
+  after the deploy, the rest once you say it looks good — one batched prompt each, not dozens.
 
 It uses only Claude Code's own primitives (skills, subagents in `~/.claude/agents/`,
 `Agent`, `SendMessage`, `TaskStop`) and nothing else: no external queue, daemon or
@@ -66,12 +68,18 @@ claude: goal: pause menu + score overlay safe-area fix, shipped to your phone
         A approved
         integrated on feat/pause-menu, 121 tests green → landing
         landed 0.42.0, on your phone
-        cleaned: 3 simulators, 2 worktrees, 1.3 GB
+        simulators cleaned: 3, 9 GB
 
         Shipped 0.42.0 to your iPhone — open the app, tap ⏸ top-left.
         - Pause menu with resume / restart / quit; timer resumes where it stopped
         - Score overlay now sits below the notch on every device size
         Open: none.
+        Held: 2 worktrees + scratch, 1.3 GB. Say "looks good" once you've
+        tested and I'll clean it up (one approval).
+
+you:  looks good
+
+claude: cleaned: 2 worktrees, 2 branches, scratch, 1.3 GB
 ```
 
 Questions the planner can't answer from the code (product decisions) come to you as
@@ -90,7 +98,9 @@ Questions the planner can't answer from the code (product decisions) come to you
                                 ▼               │   EVIDENCE, LEFT ON MACHINE)
    ┌─────────┐   ┌──────────────────────────┐   ┌──────────┐   ┌────────────┐   ┌────────┐   ┌─────────┐
    │ planner │ → │ implementer × N (parallel│ → │ reviewer │ → │ integrator │ → │ lander │ → │ cleaner │
-   │         │   │ each in .worktrees/<id>) │ ↺ │ per lane │   │ merge+test │   │ deploy │   │ sweep   │
+   │         │   │ each in .worktrees/<id>) │ ↺ │ per lane │   │ merge+test │   │ deploy │   │ sims;   │
+   │         │   │                          │   │          │   │            │   │        │   │ rest on │
+   │         │   │                          │   │          │   │            │   │        │   │ your OK │
    └─────────┘   └──────────────────────────┘   └──────────┘   └────────────┘   └────────┘   └─────────┘
         ▲ researcher whenever a question must be answered before deciding
 ```
@@ -106,8 +116,9 @@ Questions the planner can't answer from the code (product decisions) come to you
 | 5 Integrate | `integrator` | merges lanes in dependency order, full test run; deletes nothing (worktrees + branches go in its LEFT ON MACHINE) | `integrated on feat/x, 118 tests green` |
 | 6 Land | `lander` | runs the repo's ship recipe (`/land`): gate → bump → patch notes/docs → **deploy** → state file → PR → checks → merge. The deploy comes right after the build-affecting steps, before PR waits and any cleanup | `landed 0.4.2 (PR #12), on your phone` |
 | 7 Relay | router | makes sure you have the version, where to see it, and the final test result; for a visual change with no deploy path, sends 1–2 screenshots | the proof |
-| 8 Clean up | `cleaner` | strictly after land + relay: gathers the full inventory, then deletes the run's simulators, worktrees, lane branches, worktree build caches, scratch, processes in one batched command — **always**, even on an abandoned run | `cleaned: 2 simulators, 1.4 GB` |
-| 9 Report | router | what landed, version + where, what was freed, open issues | a few lines |
+| 8 Clean simulators | `cleaner` (`MODE: simulators`) | strictly after land + relay: deletes only the run's simulators and stops leftover processes, in one batched command — **always**, even on an abandoned run; measures what is held | `simulators cleaned: 2, 6 GB` |
+| 9 Report | router | what landed, version + where, what was freed, what is held and its size, open issues | a few lines + `say "looks good" to clean up` |
+| 10 Full sweep | `cleaner` (`MODE: full`) | only when you say "looks good" (or tested / clean up): deletes worktrees, lane branches, worktree build caches and scratch in one batch. Report a problem instead and the held worktrees are reused for the fix | `cleaned: 3 worktrees, 1.4 GB` |
 
 ### The report contract
 
@@ -127,28 +138,38 @@ fields the router uses to route:
 ### Machine hygiene
 
 The run assumes nobody will ever look at the machine, so it doesn't leave anything behind.
-And because every delete is an approval prompt on your phone, only one agent deletes, once,
-at the end:
+And because every delete is an approval prompt on your phone, only one agent deletes, after
+the deploy, one batch per sweep:
 
 - **One scratch dir.** Logs, build logs, screenshots, temp clones and helper scripts all go to
   `<repo>/.orchestration/<slug>/`, which is git-excluded. Never `/tmp`, `$TMPDIR` or a bare
   `mktemp`; tools that need a temp dir get `mkdir -p <scratch>/tmp` first, then `TMPDIR=<scratch>/tmp`
   (`<scratch>` being that dir).
-- **No deleting mid-run.** Every agent except the cleaner deletes nothing: no `rm`, no
-  removing worktrees, no deleting simulators. They list what they made in `LEFT ON MACHINE`.
+- **Nothing prompts before the deploy.** Every step up to and including the deploy uses only
+  commands that run without approval: no `rm`, no removing worktrees or simulators, no `kill`,
+  `chmod`, `git push`, `gh pr merge`, `git restore`/`reset`/`rebase` or `commit --amend`. A step
+  that would need one is restructured (overwrite instead of delete, `bash script.sh` instead of
+  `chmod +x`, `git rm --cached` instead of `git restore --staged`), deferred or reported. Agents
+  list what they made in `LEFT ON MACHINE`.
 - **Simulators are disposable.** Any agent that needs one creates its own,
   named `orch-<slug>-<lane>`, checks its work, then **shuts it down** before reporting (that
-  frees the memory) and records its UDID; the cleaner deletes it. Simulators are for agents to
+  frees the memory) and records its UDID; the cleaner deletes it right after the deploy. Simulators are for agents to
   check their own work. Your review happens on the deployment. (One iPhone simulator is about
   3 GB on disk, and they pile up quickly.)
-- **Worktrees** stay until the end of the run; the integrator merges them, the cleaner removes
+- **Worktrees, branches, build caches and scratch are held until you've tested.** The
+  integrator merges worktrees but doesn't remove them; the final report says what is held and
+  how big. Say "looks good" and the cleaner removes it all; report a problem and the fix reuses
   them. Each worktree has its own build cache, and an Xcode `DerivedData/` can be ~500 MB.
-- **Processes** (dev servers, watchers, `log stream`) are stopped by whoever started them.
-- **Deploy first.** The order is gate → bump → patch notes/docs → deploy → state file → PR → checks → merge → relay → clean. The lander deploys right
-  after the build-affecting steps; cleanup never runs before it or holds it up.
+- **Processes** (dev servers, watchers, `log stream`) are stopped by whoever started them,
+  without `kill` (a background task stopped with TaskStop, or a command that ends on its own);
+  anything left is stopped by the simulator sweep, except a preview server or tunnel you need
+  for testing, which is held until "looks good".
+- **Deploy first.** The order is gate → bump → patch notes/docs → deploy → state file → PR →
+  checks → merge → relay → clean simulators → (you test) → full sweep. The lander deploys right
+  after the build-affecting steps; push, merge and cleanup never run before it or hold it up.
 - **The cleaner** runs strictly after landing and the relay. It gathers the whole inventory
   (`LEFT ON MACHINE` lines plus the naming conventions `orch-*`, `.worktrees/`, `lane/*`), then
-  does every deletion in one batched command, so you approve once. It never touches the main
+  does each sweep's deletions in one batched command, so you approve once per sweep. It never touches the main
   checkout's files or its build cache, force-deletes a lane branch only when it proves the
   branch landed (rebase-merges rewrite SHAs), and leaves (and reports)
   anything it can't attribute to the run: unmerged work, uncommitted changes, things you
@@ -216,7 +237,8 @@ of the generic `land`.
 ```
 
 …or just ask in plain words to "orchestrate", "fan out" or "run this as lanes". Say "don't
-ship" if you want it to stop after integration. The cleanup step still runs.
+ship" if you want it to stop after integration. The simulator cleanup still runs; the rest
+waits for your "looks good".
 
 ---
 
@@ -231,7 +253,7 @@ ship" if you want it to stop after integration. The cleanup step still runs.
 | `reviewer` | opus / high | read + run tests | APPROVE / CHANGES REQUESTED / BLOCK, findings with file:line and expected fix |
 | `integrator` | opus / high | full edit | merges lanes, fixes mechanical breakage, full test run; deletes nothing |
 | `lander` | sonnet / medium | full edit + Skill | runs `/land`: gate, bump, deploy first, notes, state file, PR, merge |
-| `cleaner` | sonnet / low | read + Bash | the only deleter: final sweep in one batch, reports what it freed and anything it left on purpose |
+| `cleaner` | sonnet / low | read + Bash | the only deleter: simulators after the deploy, the rest when you say "looks good", one batch each; reports what it freed, what is held and anything it left on purpose |
 
 The router can override `model` per spawn when a lane is harder or easier than usual.
 `general-purpose` / `Explore` cover odd jobs that fit no role.
@@ -259,12 +281,15 @@ The router can override `model` per spawn when a lane is harder or easier than u
   remote Mac is invisible to you. Agents use simulators to check their own work, shut them
   down afterwards, and the cleaner deletes them. Anything you need to see gets deployed.
 - **Cleanup is a step of its own and always runs.** Folding it into the lander would skip it
-  whenever there's no landing (failed run, "don't ship", user stopped it). The cleaner runs
-  in every case.
-- **Deploy before cleanup; one deleter, one batch.** Every `rm` is a permission prompt on your
-  phone. Agents that delete their own scratch as they go bury you in prompts and make the
-  deploy wait behind them. So nobody deletes until the deploy is out and relayed, and then
-  the cleaner does it all in one command.
+  whenever there's no landing (failed run, "don't ship", user stopped it). The simulator sweep
+  runs in every case.
+- **Nothing prompts before the deploy; one deleter, one batch per sweep.** Every `rm`, push,
+  merge or `kill` is a permission prompt on your phone. A prompt before the deploy makes you
+  wait to see your change, so every step through the deploy runs prompt-free, and push, merge
+  and deletes come after it.
+- **Hold cleanup until you've tested.** If the deploy shows a problem, the fix is fastest in
+  the worktree and scratch that built it, so only simulators (big, and never reused) go right
+  away. Everything else waits for your "looks good", then goes in one batch.
 
 ## Failure handling
 
@@ -274,7 +299,8 @@ The router can override `model` per spawn when a lane is harder or easier than u
 | resume fails | spawns a fresh agent of the same type with the dead one's partial notes, worktree and branch, and adds the dead agent's leftovers to the cleaner's inventory |
 | whole account rate-limited | one status line, waits, doesn't start doing the work itself |
 | same lane fails twice | stops and asks you |
-| you stop the run / it's abandoned | stops running agents first, then still runs the cleaner (in one batch). Asks once whether to keep unmerged lane branches; worktrees, simulators and processes are removed either way |
+| you stop the run / it's abandoned | stops running agents first, then still runs the simulator sweep (simulators and leftover processes go either way) and reports what is held. The full sweep waits for your word, and asks once whether to keep unmerged lane branches |
+| you report a problem after the deploy | no full sweep; the fix goes to the lane's implementer in its held worktree, then review → integrate → land → simulator sweep again |
 
 ## Customizing
 
