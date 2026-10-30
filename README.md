@@ -149,8 +149,11 @@ the deploy, one batch per sweep:
   commands that run without approval: no `rm`, no removing worktrees or simulators, no `kill`,
   `chmod`, `git push`, `gh pr merge`, `git restore`/`reset`/`rebase` or `commit --amend`. A step
   that would need one is restructured (overwrite instead of delete, `bash script.sh` instead of
-  `chmod +x`, `git rm --cached` instead of `git restore --staged`), deferred or reported. Agents
-  list what they made in `LEFT ON MACHINE`.
+  `chmod +x`, `git rm --cached` instead of `git restore --staged`), deferred or reported.
+  Restructuring means not needing the gated operation, never doing it through another command:
+  no `commit-tree`/`update-ref`/`checkout -B`/`branch -f` to rewrite or move a branch, no `mv`
+  to a trash dir or `find`/`xargs` variant to delete. Review-round fixes go in a new
+  descriptive commit on the lane branch. Agents list what they made in `LEFT ON MACHINE`.
 - **Simulators are disposable.** Any agent that needs one creates its own,
   named `orch-<slug>-<lane>`, checks its work, then **shuts it down** before reporting (that
   frees the memory) and records its UDID; the cleaner deletes it right after the deploy. Simulators are for agents to

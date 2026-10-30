@@ -190,9 +190,10 @@ git checkout <default-branch> && git pull --ff-only
 - **On the default branch with uncommitted work?** Cut `feature/<slug>` first, then commit there.
 - **Stage only intended source changes.** Nothing from `.orchestration/`, no logs, screenshots,
   `DerivedData/`, build output or temp files. A new-file stray staged? `git rm -r --cached -q
-  <path>` unstages it and keeps the file (`git restore` prompts). A tracked-file stray that
-  can't be unstaged without a prompt: don't commit it; report it. Never commit a stray and
-  delete it in a follow-up commit.
+  <path>` unstages it and keeps the file — only on a path showing `A` in `git status --short`
+  (on a tracked path it stages a deletion; `git add <path>` undoes). A tracked-file stray: this
+  step runs after the deploy, so `git restore --staged <path>` (one prompt) is allowed here.
+  Never commit a stray and delete it in a follow-up commit.
 - **No stray commits on the PR branch** — no "wip", fixup or scratch commits. The PR carries
   the session's intended commits only (lane commits merged by an integrator are fine).
 - **One commit** for the session's work. Subject in the log's existing style

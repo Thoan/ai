@@ -41,7 +41,11 @@ So:
   `git reset`/`restore`/`rebase` or `commit --amend`. A step that would need one is restructured
   (write to scratch instead of deleting, overwrite instead of remove, `bash script.sh` instead of
   `chmod +x`, `git rm -r --cached -q` instead of `git restore --staged`), deferred until after the deploy,
-  or reported — never prompted. Push, PR merge and cleanup always come after the deploy.
+  or reported — never prompted. Restructuring means not needing the gated operation, never
+  doing it through another command: no `commit-tree`/`update-ref`/`checkout -B`/`branch -f` to
+  rewrite or move a branch, no `mv` to a trash dir or `find`/`xargs` variant to delete.
+  Review-round fixes go in a new descriptive commit on the lane branch. Push, PR merge and
+  cleanup always come after the deploy.
 - **Cleanup is held until the user has tested.** Only the cleaner deletes, in one batched
   command per sweep. Right after the deploy and relay it deletes only the run's simulators.
   Worktrees, lane branches, build caches and scratch stay until the user says it looks good —
@@ -222,9 +226,12 @@ every agent is told in its definition:
   changes staged: no scratch, logs, screenshots, `.orchestration/`, `DerivedData/` or temp
   files. Stage paths by name, not `git add -A`. New-file stray staged (log, screenshot,
   `DerivedData/`)? `git rm -r --cached -q <path>` unstages it and keeps the file, even mid-merge
-  (`git restore` prompts). A tracked-file stray: in a lane worktree, outside a merge, commit with
+  (`git restore` prompts) — only on a path showing `A` in `git status --short` (on a tracked
+  path it stages a deletion; `git add <path>` undoes). After the deploy (the lander's commit),
+  `git restore --staged` is allowed. A tracked-file stray: in a lane worktree, outside a merge, commit with
   an explicit pathspec (`git commit -F - -- <paths>`); anywhere else, don't commit it, report it
-  in LEFT ON MACHINE. Never commit it and delete it in a follow-up. No "wip"/fixup commits on a lane or PR branch.
+  in LEFT ON MACHINE. Never commit it and delete it in a follow-up. No "wip"/fixup-style commits on a lane or PR
+  branch; review-round fixes are a new descriptive commit, never an amend or rewrite.
 - **Every report ends with `LEFT ON MACHINE:`** — simulators, worktrees, branches, PIDs, scratch
   paths still present, or `nothing`. That line is the cleaner's inventory.
 - **What the cleaner never touches:** the main checkout's own files, its build cache (it keeps
