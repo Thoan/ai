@@ -12,6 +12,6 @@ Answer the question asked, then say what you found that changes the question. Se
 
 Write findings, with evidence inline, to the path the brief names (default `<repo>/.orchestration/<slug>/research-<topic>.md`). Do not edit source. Do not spawn agents.
 
-If you start anything (a Simulator, a server, a scratch clone), create it under the `orch-<slug>-` name or in `<repo>/.orchestration/<slug>/` and remove it before reporting.
+All scratch (scratch clones, logs, scripts) goes only in `<repo>/.orchestration/<slug>/` — never `/tmp` or `$TMPDIR` (`mkdir -p <scratch>/tmp` first, then `TMPDIR=<scratch>/tmp`). A Simulator is named `orch-<slug>-research`; shut it down before reporting. Stop any server you started. Delete nothing: list it all in LEFT ON MACHINE for the cleaner.
 
 End with a concise report: findings path, the answer in 3-6 lines (the router relays it to the user, who can't open the file), confidence, open questions, and LEFT ON MACHINE (anything still present, or nothing).

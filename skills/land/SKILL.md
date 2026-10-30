@@ -1,6 +1,6 @@
 ---
 name: land
-description: Close out a work session in any project — test, bump the version, deploy, write patch notes, refresh the state file, then commit, push a branch, open a pull request, and merge it once its checks pass. Never pushes to the default branch directly. Use when the user types /land or says to ship it, land it, wrap up, or deploy the current work.
+description: Close out a work session in any project — test, bump the version, write patch notes, deploy, refresh the state file, then commit, push a branch, open a pull request, and merge it once its checks pass. Never pushes to the default branch directly. Use when the user types /land or says to ship it, land it, wrap up, or deploy the current work.
 user-invocable: true
 allowed-tools:
   - Read
@@ -16,6 +16,24 @@ allowed-tools:
 
 The project-agnostic version of the per-repo `*-land` skills. Run the steps **in order** —
 the version bump is gated on a green build, and the deploy is gated on the bump.
+
+**Deploy early, delete nothing.** The order is gate → bump → patch notes/docs → deploy →
+state file → PR → checks → merge. Deploy (step 5) right after the build-affecting steps 1-4,
+before the PR, any PR wait and any cleanup. This skill deletes no files: every `rm` is an
+approval prompt for a user on their phone. Leave scratch where it is and list it in the
+report; an orchestration run's cleaner removes it last.
+
+**Scratch** (logs, build output you capture, helper scripts) goes in one dir: under
+`/orchestration`, the run's SCRATCH dir (`<repo>/.orchestration/<slug>/`); on its own, the fixed
+`<repo>/.orchestration/land/`, reused every run (overwrite `land.log`, don't append), so nothing
+piles up. Make sure it's git-excluded:
+
+```sh
+x="$(git rev-parse --git-common-dir)/info/exclude"; grep -qxF '.orchestration/' "$x" || echo '.orchestration/' >> "$x"
+```
+
+Never `/tmp`, `$TMPDIR` or a bare `mktemp`; for tools that need a temp dir, `mkdir -p <scratch>/tmp`
+first, then `TMPDIR=<scratch>/tmp`.
 
 **`/land` means land it.** Invoking this skill *is* the authorization to commit, push the
 branch, open the PR and merge it. Don't stop at a commit and offer the merge; don't ask whether
@@ -55,7 +73,7 @@ xcodebuild test -scheme <Scheme> -destination 'platform=macOS' 2>&1 | tail -30
 ```
 
 Long builds auto-background; redirect to a log and poll rather than chaining `sleep`:
-`... > /tmp/land.log 2>&1`, then loop until the log matches
+`... > <scratch>/land.log 2>&1` (never `/tmp`), then loop until the log matches
 `TEST (SUCCEEDED|FAILED)|BUILD (SUCCEEDED|FAILED)`.
 
 **Red → stop and fix.** Never bump, never deploy, never merge on red. If a test is expected
@@ -103,7 +121,7 @@ which invariant it covered.
 ## 5. Deploy
 
 Use the `CLAUDE.md` recipe verbatim if there is one. **A green build is the cue — don't wait
-to be asked.**
+to be asked**, and don't wait for anything else: not the PR, not checks, not cleanup.
 
 For an iOS project with no recipe, discover the device rather than guessing:
 
@@ -148,17 +166,25 @@ doesn't already record. Update an existing memory file rather than adding a near
 ## 8. Land it — through a pull request
 
 ```sh
-git add -A && git commit -F -               # subject matching the log's existing style
+git add <intended paths>                    # by name — never a blind `git add -A`
+git status --short && git diff --cached --stat   # verify: only intended source changes
+git commit -F -                             # subject matching the log's existing style
+git log --oneline <default-branch>..HEAD    # verify: only the session's intended commits
 git push -u origin <branch>                 # the feature branch, never the default branch
 gh pr create --base <default-branch> --head <branch> --title "<subject>" --body-file -
 gh pr checks <pr> --watch                   # wait for required checks
-gh pr merge <pr> --rebase --delete-branch   # once green
+gh pr merge <pr> --rebase --delete-branch   # once green; deletes the PR branch (remote + local)
 git checkout <default-branch> && git pull --ff-only
 ```
 
 - Determine the default branch from `git symbolic-ref refs/remotes/origin/HEAD`, else
   whichever of `main`/`master` exists.
 - **On the default branch with uncommitted work?** Cut `feature/<slug>` first, then commit there.
+- **Stage only intended source changes.** Nothing from `.orchestration/`, no logs, screenshots,
+  `DerivedData/`, build output or temp files. A stray file staged? `git restore --staged <path>`
+  before committing — never commit it and delete it in a follow-up commit.
+- **No stray commits on the PR branch** — no "wip", fixup or scratch commits. The PR carries
+  the session's intended commits only (lane commits merged by an integrator are fine).
 - **One commit** for the session's work. Subject in the log's existing style
   (`git log --oneline -5`). Body: what changed and why, plus any measured numbers.
 - **PR body:** what changed for the user, the test result (command + pass count), the version
@@ -177,5 +203,5 @@ Don't also invoke `/cmp` — this step *is* that flow.
 
 ## 9. Report
 
-Short. What shipped, what's on the device, the PR link and whether it merged, and **anything left
-out of scope** the user needs to weigh in on.
+Short. What shipped, what's on the device, the PR link and whether it merged, **anything left
+out of scope** the user needs to weigh in on, and the scratch paths you left (not deleted).

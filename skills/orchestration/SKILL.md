@@ -34,6 +34,9 @@ So:
 - **The machine is unattended.** Nobody will notice a booted Simulator, a 3 GB DerivedData
   folder or a stray dev server until the disk fills up. Orchestration ends with a cleanup step
   (step 8) that removes everything the run created.
+- **Every delete is a prompt on the phone.** So only the cleaner deletes, once, at the very end,
+  in one batched command. No other agent runs `rm`, removes a worktree or deletes a simulator,
+  and nothing — cleanup least of all — ever stands between a green build and the deploy.
 - **Be brief.** It's a phone. One status line per event; a short final report.
 
 ## The one rule (non-negotiable)
@@ -84,9 +87,9 @@ named in its EVIDENCE line (SendUserFile, by path) is relaying, not reading — 
 | `implementer` | sonnet/medium, worktree | routine, well-specified code lane |
 | `implementer-opus` | opus/medium, worktree | code lane needing judgment |
 | `reviewer` | opus/high, read-only | verify a lane against its DONE WHEN; your only "verification" |
-| `integrator` | opus/high | merge lane branches, resolve conflicts, full test run, clean worktrees |
-| `lander` | sonnet/medium | run the repo's ship flow (e.g. `/land`): bump, deploy for human review, open + merge the PR |
-| `cleaner` | sonnet/low | final sweep: simulators, worktrees, lane branches, build caches, scratch, stray processes |
+| `integrator` | opus/high | merge lane branches, resolve conflicts, full test run (deletes nothing) |
+| `lander` | sonnet/medium | run the repo's ship flow (e.g. `/land`): bump, deploy right after the build-affecting steps, then open + merge the PR |
+| `cleaner` | sonnet/low | the only agent that deletes, last, in one batch: simulators, worktrees, lane branches, build caches, scratch, stray processes |
 
 `general-purpose` / `Explore` are fine for odd jobs that fit no role. Override `model`
 on a spawn when the lane is harder or easier than its default.
@@ -122,6 +125,9 @@ on a spawn when the lane is harder or easier than its default.
 6. **Land (delegated).** Spawn `lander` with the integration branch and report. It follows
    the repo's CLAUDE.md "Ship a change" section / `/land`, including deploying to wherever
    the user reviews (their phone, TestFlight, a preview URL) when the repo supports it.
+   **Deploy comes first.** The order is gate → bump → patch notes/docs → deploy → state file →
+   PR → checks → merge → relay → clean: the lander deploys right after the build-affecting
+   steps 1-4, before it opens the PR or waits on checks or the merge, and before any cleanup. Nothing is deleted before the deploy.
    Skip only if the user said not to ship.
 7. **Relay verification.** Before anything is cleaned up, make sure the user has what they
    need to trust the result *without* the machine:
@@ -130,11 +136,17 @@ on a spawn when the lane is harder or easier than its default.
    - for a visual change with **no** deployment path, the one or two screenshots that prove
      it, sent with SendUserFile from the paths in an agent's EVIDENCE line. With a deployment,
      skip screenshots: the deployment is the review.
-8. **Clean up (delegated) — always.** Spawn `cleaner` with the repo path, the slug, and the
-   inventory of everything the run left on the machine, copied from every report's
-   `LEFT ON MACHINE` line (simulator UDIDs, worktrees, lane branches, PIDs, temp paths). It
-   runs whether the work landed, was abandoned, or failed — the only exception is a lane the
-   user asked to keep, which you name in the brief. Then `TaskStop` any agent still running.
+8. **Clean up (delegated) — always, and strictly last.** Spawn `cleaner` only after step 6
+   (land) and step 7 (relay) are done, or once they were skipped, failed or abandoned — never
+   before or alongside the lander; cleanup never gates or precedes a deploy. First `TaskStop`
+   every agent still running. Brief it with the repo path, the slug, the integration/PR head
+   sha and PR number from the lander's report (it needs them to recognise lane branches that
+   landed through a rebase-merge), and the inventory of everything the run left on the
+   machine, copied from every report's `LEFT ON MACHINE` line (simulator UDIDs, worktrees,
+   lane branches, PIDs, scratch paths). It gathers the full list first, then deletes in one
+   batched command, so the user approves once. It runs whether the work landed, was abandoned,
+   or failed — the only exception is a lane the user asked to keep, which you name in the
+   brief.
 9. **Report.** Tell the user what landed, the **version deployed and where**, what the
    cleaner freed, and open issues. Nothing in the report may require opening a file.
 
@@ -148,7 +160,7 @@ READ FIRST: <paths: CLAUDE.md, docs/STATE.md, plan, prior reports, review file>
 FILES: own <…> / do not touch <…>
 PRIOR WORK: <2-5 lines lifted from earlier reports: branch, sha, gotchas>
 DONE WHEN: <verifiable: command + expected result>
-SCRATCH: <repo>/.orchestration/<slug>/ (long output, screenshots → <scratch>/shots/)
+SCRATCH: <repo>/.orchestration/<slug>/ (all scratch; screenshots → <scratch>/shots/; never /tmp)
 REPORT: end with your standard report, including EVIDENCE and LEFT ON MACHINE
 ```
 
@@ -157,24 +169,38 @@ paste source into a brief — you shouldn't have any.
 
 ## Machine hygiene (every agent, every run)
 
-The user can't see the machine, so agents clean up after themselves, and the cleaner sweeps up
-whatever they missed. The rules every agent is told in its definition:
+The user can't see the machine and every `rm` is an approval prompt on their phone, so agents
+stop what they started, record what they made, and leave all deleting to the cleaner. The rules
+every agent is told in its definition:
 
+- **Scratch lives in one place: `<repo>/.orchestration/<slug>/`** (git-excluded). Logs, build
+  logs, screenshots (`shots/`), temp clones, helper scripts — all of it. Never `/tmp`,
+  `/private/tmp`, `$TMPDIR` or a bare `mktemp`. A tool that insists on a temp dir gets pointed
+  there (`mkdir -p <scratch>/tmp` first, then `TMPDIR=<scratch>/tmp`; `mktemp <scratch>/x.XXXXXX`). Never into the worktree or the repo;
+  the paths that prove a claim go in the report's EVIDENCE line.
+- **No deleting mid-run.** Every agent except the cleaner deletes nothing: no `rm` of scratch,
+  no removing worktrees, deleting branches or deleting simulators. They list it in LEFT ON MACHINE and
+  the cleaner removes it all at the end in one batch.
 - **Simulators are disposable.** An agent that needs one creates its own,
   named `orch-<slug>-<lane>` (`xcrun simctl create ...`), uses it to check its work, then
-  shuts it down and deletes it (`xcrun simctl delete <udid>`) **before reporting**. Never reuse
-  or leave behind a long-lived named simulator. Never boot one for the user to look at.
-- **Screenshots and long logs go to `<repo>/.orchestration/<slug>/`**, never into the worktree
-  or the repo, and the paths that prove a claim go in the report's EVIDENCE line.
-- **Anything started is stopped.** Dev servers, watchers, `log stream`, emulators: stop them
-  before reporting. Anything that must outlive the agent (rare) goes in LEFT ON MACHINE with
-  its PID.
-- **Every report ends with `LEFT ON MACHINE:`** — simulators, worktrees, branches, PIDs, temp
+  **shuts it down** (frees the memory) before reporting and records its UDID in LEFT ON MACHINE;
+  the cleaner deletes it. Never reuse a long-lived named simulator. Never boot one for the user
+  to look at.
+- **Anything started is stopped.** Dev servers, watchers, `log stream`, emulators: whoever
+  started them stops them before reporting. Anything that must outlive the agent (rare) goes in
+  LEFT ON MACHINE with its PID.
+- **Clean commits only.** Before every commit, `git status` must show only the intended source
+  changes staged: no scratch, logs, screenshots, `.orchestration/`, `DerivedData/` or temp
+  files. Stage paths by name, not `git add -A`. Stray file staged? Unstage it
+  (`git restore --staged <path>`) before committing — never commit it and delete it in a
+  follow-up. No "wip"/fixup commits on a lane or PR branch.
+- **Every report ends with `LEFT ON MACHINE:`** — simulators, worktrees, branches, PIDs, scratch
   paths still present, or `nothing`. That line is the cleaner's inventory.
 - **What the cleaner never touches:** the main checkout's own files, its build cache (it keeps
   the next deploy fast), unmerged lane branches the user asked to keep, and anything a report
   doesn't attribute to this run or that doesn't match the `orch-` / `.worktrees/` / `lane/`
-  conventions.
+  conventions. It force-deletes a lane branch only when it proves the branch landed (patch
+  equivalent on the default branch, or contained in the merged PR's head sha).
 
 ## Worktrees and parallelism
 
@@ -186,7 +212,8 @@ whatever they missed. The rules every agent is told in its definition:
   and branch come back in their report — pass those through untouched.
 - Research, planning and review lanes don't need worktrees.
 - Worktrees carry their own build caches (an Xcode `DerivedData/` can be 500 MB each). They
-  are removed by the integrator once merged, and by the cleaner otherwise.
+  stay until the end of the run: the integrator merges them but doesn't remove them; the
+  cleaner removes them with everything else in its single batch.
 
 ## Failures, deaths, rate limits
 
@@ -195,12 +222,12 @@ whatever they missed. The rules every agent is told in its definition:
   and worktree.
 - If resume fails, spawn a fresh agent of the same type with PRIOR WORK = what the dead
   agent's partial report/notes said and its worktree/branch path, so it continues rather
-  than restarts. A dead agent can't clean up after itself: add `orch-<slug>-<lane>` simulators
-  and its worktree to the cleaner's inventory.
+  than restarts. A dead agent can't report its LEFT ON MACHINE: add `orch-<slug>-<lane>`
+  simulators and its worktree to the cleaner's inventory.
 - If the whole account is rate-limited, tell the user one line and wait; don't fill the
   gap by doing the work.
 - Two failures on the same lane → stop and ask the user.
-- The user stops the run, or you give up: still run step 8. An abandoned run must not leave
+- The user stops the run, or you give up: `TaskStop` every running agent, then still run step 8. An abandoned run must not leave
   simulators booted or worktrees on disk. Ask once whether to keep unmerged lane branches
   (they're cheap and recoverable); worktrees, simulators and processes go regardless.
 
@@ -230,4 +257,6 @@ proof. Never a local path the user is expected to open.
 - Never create GitHub remotes or new repos without the user asking.
 - `.orchestration/` is scratch; the planner adds it to `<repo>/.git/info/exclude` so it is
   never committed. You never open it. The cleaner deletes `<repo>/.orchestration/<slug>/` at
-  the end of the run, after step 7 has relayed what the user needs.
+  the end of the run, after the deploy and after step 7 has relayed what the user needs.
+- **Only clean commits and PRs reach GitHub:** the session's intended source changes, no
+  scratch, no wip/fixup commits.
