@@ -35,5 +35,5 @@ STATUS: CLEAN | PARTIAL
 MODE: simulators | full
 REMOVED: simulators (count + names), worktrees, branches (with the landed test each passed), processes, scratch paths
 FREED: approximate disk space reclaimed
-HELD (simulators mode): every held worktree + branch, DerivedData entry and scratch path, with sizes and a total — the router relays it and the full sweep's inventory comes from it
+HELD (simulators mode): every held worktree + branch, DerivedData entry and scratch path, with sizes and a total, plus every held PID with its command — the router relays it and the full sweep's inventory comes from it
 LEFT ON MACHINE: anything still present and why (held for testing, kept by request, unmerged, uncommitted work, couldn't attribute), or nothing
