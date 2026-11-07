@@ -8,6 +8,7 @@ work runs on a machine you never look at.
 ```
 skills/
   orchestration/SKILL.md    # the router: the main thread plans, delegates, relays, never works
+  orchestration/house-rules.md  # how every agent treats the machine (scratch, prompts, cleanup)
   land/SKILL.md             # generic ship flow the lander runs (test → bump → deploy → PR → merge)
 agents/                     # the subagent roster the router spawns
   planner.md  researcher.md  implementer.md  implementer-opus.md
@@ -28,8 +29,8 @@ menu and fix the score overlay". Then the session:
 3. has a separate **reviewer** check every lane against a verifiable done-criterion,
 4. **integrates** the lanes and runs the full test suite,
 5. **lands** the work: bumps the version, **deploys it somewhere your phone can reach**
-   (OTA install, TestFlight, a preview URL) right after the build-affecting steps, then opens a pull
-   request and merges it once its checks pass. Nothing is ever pushed straight to `main`,
+   (OTA install, TestFlight, a preview URL), then opens a pull request and merges it once its
+   checks pass. Nothing is ever pushed straight to `main`,
 6. **cleans up simulators** right after the deploy, in one batch,
 7. sends you a few lines of status: what shipped, which version is on your phone, how many
    tests passed, and what is **held** (worktrees, build caches, scratch) and how big,
@@ -98,9 +99,9 @@ Questions the planner can't answer from the code (product decisions) come to you
                                 ▼               │   EVIDENCE, LEFT ON MACHINE)
    ┌─────────┐   ┌──────────────────────────┐   ┌──────────┐   ┌────────────┐   ┌────────┐   ┌─────────┐
    │ planner │ → │ implementer × N (parallel│ → │ reviewer │ → │ integrator │ → │ lander │ → │ cleaner │
-   │         │   │ each in .worktrees/<id>) │ ↺ │ per lane │   │ merge+test │   │ deploy │   │ sims;   │
-   │         │   │                          │   │          │   │            │   │        │   │ rest on │
-   │         │   │                          │   │          │   │            │   │        │   │ your OK │
+   │         │   │ each in .worktrees/<id>) │ ↺ │ per lane │   │ merge+test │   │ deploy │   │ sims,   │
+   │         │   │                          │   │          │   │            │   │ + PR   │   │ then    │
+   │         │   │                          │   │          │   │            │   │        │   │ the rest│
    └─────────┘   └──────────────────────────┘   └──────────┘   └────────────┘   └────────┘   └─────────┘
         ▲ researcher whenever a question must be answered before deciding
 ```
@@ -114,9 +115,9 @@ Questions the planner can't answer from the code (product decisions) come to you
 | 3 Fan out | `implementer` / `implementer-opus` | every lane in a parallel group is spawned in one message; each makes its own worktree + `lane/<id>` branch, implements, runs the real tests, commits | `A running · B running` |
 | 4 Review | `reviewer` | runs the tests itself, checks DONE WHEN + repo invariants; findings go back to the same implementer (max 2 rounds) | `A done, 42 tests green → reviewing` |
 | 5 Integrate | `integrator` | merges lanes in dependency order, full test run; deletes nothing (worktrees + branches go in its LEFT ON MACHINE) | `integrated on feat/x, 118 tests green` |
-| 6 Land | `lander` | runs the repo's ship recipe (`/land`): gate → bump → patch notes/docs → **deploy** → state file → PR → checks → merge. The deploy comes right after the build-affecting steps, before PR waits and any cleanup | `landed 0.4.2 (PR #12), on your phone` |
+| 6 Land | `lander` | runs the repo's ship recipe (`/land`): gate → bump → patch notes/docs → **deploy** → state file → PR → checks → merge. The deploy comes before anything that needs your approval | `landed 0.4.2 (PR #12), on your phone` |
 | 7 Relay | router | makes sure you have the version, where to see it, and the final test result; for a visual change with no deploy path, sends 1–2 screenshots | the proof |
-| 8 Clean simulators | `cleaner` (`MODE: simulators`) | strictly after land + relay: deletes only the run's simulators and stops leftover processes, in one batched command — **always**, even on an abandoned run; measures what is held | `simulators cleaned: 2, 6 GB` |
+| 8 Clean simulators | `cleaner` (`MODE: simulators`) | after land + relay, **always** (even on an abandoned run): deletes the run's simulators and stops leftover processes in one batch, and measures what's held | `simulators cleaned: 2, 6 GB` |
 | 9 Report | router | what landed, version + where, what was freed, what is held and its size, open issues | a few lines + `say "looks good" to clean up` |
 | 10 Full sweep | `cleaner` (`MODE: full`) | only when you say "looks good" (or tested / clean up): deletes worktrees, lane branches, worktree build caches and scratch in one batch. Report a problem instead and the held worktrees are reused for the fix | `cleaned: 3 worktrees, 1.4 GB` |
 
@@ -137,49 +138,22 @@ fields the router uses to route:
 
 ### Machine hygiene
 
-The run assumes nobody will ever look at the machine, so it doesn't leave anything behind.
-And because every delete is an approval prompt on your phone, only one agent deletes, after
-the deploy, one batch per sweep:
+Nobody watches the machine, and every delete, push or merge is an approval prompt on your
+phone. So every agent follows the same [house rules](skills/orchestration/house-rules.md):
 
-- **One scratch dir.** Logs, build logs, screenshots, temp clones and helper scripts all go to
-  `<repo>/.orchestration/<slug>/`, which is git-excluded. Never `/tmp`, `$TMPDIR` or a bare
-  `mktemp`; tools that need a temp dir get `mkdir -p <scratch>/tmp` first, then `TMPDIR=<scratch>/tmp`
-  (`<scratch>` being that dir).
-- **Nothing prompts before the deploy.** Every step up to and including the deploy uses only
-  commands that run without approval: no `rm`, no removing worktrees or simulators, no `kill`,
-  `chmod`, `git push`, `gh pr merge`, `git restore`/`reset`/`rebase` or `commit --amend`. A step
-  that would need one is restructured (overwrite instead of delete, `bash script.sh` instead of
-  `chmod +x`, `git rm --cached` instead of `git restore --staged`), deferred or reported.
-  Restructuring means not needing the gated operation, never doing it through another command:
-  no `commit-tree`/`update-ref`/`checkout -B`/`branch -f` to rewrite or move a branch, no `mv`
-  to a trash dir or `find`/`xargs` variant to delete. Review-round fixes go in a new
-  descriptive commit on the lane branch. Agents list what they made in `LEFT ON MACHINE`.
-- **Simulators are disposable.** Any agent that needs one creates its own,
-  named `orch-<slug>-<lane>`, checks its work, then **shuts it down** before reporting (that
-  frees the memory) and records its UDID; the cleaner deletes it right after the deploy. Simulators are for agents to
-  check their own work. Your review happens on the deployment. (One iPhone simulator is about
-  3 GB on disk, and they pile up quickly.)
-- **Worktrees, branches, build caches and scratch are held until you've tested.** The
-  integrator merges worktrees but doesn't remove them; the final report says what is held and
-  how big. Say "looks good" and the cleaner removes it all; report a problem and the fix reuses
-  them. Each worktree has its own build cache, and an Xcode `DerivedData/` can be ~500 MB.
-- **Processes** (dev servers, watchers, `log stream`) are stopped by whoever started them,
-  without `kill` (a background task stopped with TaskStop, or a command that ends on its own);
-  anything left is stopped by the simulator sweep, except a preview server or tunnel you need
-  for testing, which is held until "looks good".
-- **Deploy first.** The order is gate → bump → patch notes/docs → deploy → state file → PR →
-  checks → merge → relay → clean simulators → (you test) → full sweep. The lander deploys right
-  after the build-affecting steps; push, merge and cleanup never run before it or hold it up.
-- **The cleaner** runs strictly after landing and the relay. It gathers the whole inventory
-  (`LEFT ON MACHINE` lines plus the naming conventions `orch-*`, `.worktrees/`, `lane/*`), then
-  does each sweep's deletions in one batched command, so you approve once per sweep. It never touches the main
-  checkout's files or its build cache, force-deletes a lane branch only when it proves the
-  branch landed (rebase-merges rewrite SHAs), and leaves (and reports)
-  anything it can't attribute to the run: unmerged work, uncommitted changes, things you
-  asked to keep.
-- **Clean commits only.** Agents stage intended paths by name and check `git status` before
-  committing: no scratch, logs, screenshots, `.orchestration/`, `DerivedData/` or temp files,
-  no wip/fixup commits. Only the session's intended commits reach GitHub.
+- **Nothing prompts before the deploy.** Until your change is deployed, agents only run
+  commands that need no approval, and they never route around a prompt with another command.
+- **Only the cleaner deletes**, one batched command at a time: simulators right after the
+  deploy, everything else once you say "looks good".
+- **One scratch folder** per run, `<repo>/.orchestration/<slug>/`, git-excluded. Never `/tmp`.
+- **Simulators are disposable.** An agent makes its own (`orch-<slug>-<lane>`), shuts it down
+  when it's done, and the cleaner deletes it. One iPhone simulator is about 3 GB.
+- **Processes are stopped by whoever started them**, without `kill`. A preview server you need
+  for testing is held until "looks good".
+- **Clean commits only.** Paths are staged by name, and no scratch or wip commits reach GitHub.
+- **Every report ends with `LEFT ON MACHINE`**, the cleaner's inventory. The cleaner never
+  touches the main checkout or its build cache. It only force-deletes a lane branch it can prove
+  landed, and it leaves (and reports) anything it can't tie to the run.
 
 ---
 
@@ -205,7 +179,8 @@ git clone https://github.com/Thoan/ai && cd ai
 ```
 
 `install.sh` moves anything it would replace to `~/.claude/backups/<timestamp>/` (outside
-the folders Claude Code loads from) and skips files that are already identical. Start a new Claude Code session afterwards so it picks them up.
+the folders Claude Code loads from) and skips files that are already identical. Start a new
+Claude Code session afterwards so it picks them up.
 
 ### 3. Give your repo a ship recipe
 
@@ -255,7 +230,7 @@ waits for your "looks good".
 | `implementer-opus` | opus / medium | full edit | a lane that needs judgment (tricky refactors, concurrency, gnarly bugs) |
 | `reviewer` | opus / high | read + run tests | APPROVE / CHANGES REQUESTED / BLOCK, findings with file:line and expected fix |
 | `integrator` | opus / high | full edit | merges lanes, fixes mechanical breakage, full test run; deletes nothing |
-| `lander` | sonnet / medium | full edit + Skill | runs `/land`: gate, bump, deploy first, notes, state file, PR, merge |
+| `lander` | sonnet / medium | full edit + Skill | runs `/land`: gate, bump, notes, deploy, state file, PR, merge |
 | `cleaner` | sonnet / low | read + Bash | the only deleter: simulators after the deploy, the rest when you say "looks good", one batch each; reports what it freed, what is held and anything it left on purpose |
 
 The router can override `model` per spawn when a lane is harder or easier than usual.
