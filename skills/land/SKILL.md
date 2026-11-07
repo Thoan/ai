@@ -17,27 +17,23 @@ allowed-tools:
 The project-agnostic version of the per-repo `*-land` skills. Run the steps **in order** —
 the version bump is gated on a green build, and the deploy is gated on the bump.
 
-**Deploy early, nothing prompts before it.** The order is gate → bump → patch notes/docs →
-deploy → state file → PR → checks → merge. Deploy (step 5) right after the build-affecting
-steps 1-4, before the PR, any PR wait and any cleanup. Every approval is a prompt for a user on
-their phone, so steps 1-5 run only commands that need none: no `rm` or other delete, no `kill`,
-no `chmod` (run `bash <script>`), no `git push`, `gh pr merge`, `git restore`/`reset`/`rebase`
-or `commit --amend`. A pre-deploy step that would need one is restructured (overwrite instead
-of removing) or reported, never prompted. Push and merge (step 8) come after the deploy. This
-skill deletes no files: leave scratch where it is and list it in the report; under
-`/orchestration` the cleaner removes it once the user has tested.
+**Deploy before anything that prompts.** Order: gate → bump → patch notes → docs → **deploy**
+→ state file → commit → PR → checks → merge. The user may be on their phone, where every
+approval is a prompt, so steps 1-5 use only commands that need none: no `rm`, `kill`, `chmod`
+(run `bash <script>`), `git push`, `gh pr merge`, `git restore`/`reset`/`rebase` or
+`commit --amend`. If a step would need one, restructure it (overwrite instead of delete) or
+defer it and say so. Never route around a prompt with another command. This skill deletes no
+files.
 
-**Scratch** (logs, build output you capture, helper scripts) goes in one dir: under
-`/orchestration`, the run's SCRATCH dir (`<repo>/.orchestration/<slug>/`); on its own, the fixed
-`<repo>/.orchestration/land/`, reused every run (overwrite `land.log`, don't append), so nothing
-piles up. Make sure it's git-excluded:
+**Scratch** goes in one git-excluded folder, never `/tmp`: the run's `<repo>/.orchestration/<slug>/`
+under `/orchestration`, else `<repo>/.orchestration/land/` (overwrite `land.log` each run). Make
+sure it's excluded:
 
 ```sh
 x="$(git rev-parse --git-common-dir)/info/exclude"; grep -qxF '.orchestration/' "$x" || echo '.orchestration/' >> "$x"
 ```
 
-Never `/tmp`, `$TMPDIR` or a bare `mktemp`; for tools that need a temp dir, `mkdir -p <scratch>/tmp`
-first, then `TMPDIR=<scratch>/tmp`.
+A tool that wants a temp folder: `mkdir -p <scratch>/tmp`, then `TMPDIR=<scratch>/tmp`.
 
 **`/land` means land it.** Invoking this skill *is* the authorization to commit, push the
 branch, open the PR and merge it. Don't stop at a commit and offer the merge; don't ask whether
@@ -59,9 +55,9 @@ Everything project-specific comes from the repo, not from this file:
   instead and say so.
 - **The state file** — `docs/STATE.md`, else `STATE.md`.
 
-The recipe decides *what* runs; the no-prompt rule above decides *when*: a recipe step that
-would prompt before the deploy is substituted (`bash tools/deploy.sh` instead of `chmod +x`,
-overwrite instead of delete) or deferred until after the deploy and reported.
+The recipe decides *what* runs; the rule above decides *when*. A recipe step that would prompt
+before the deploy is substituted (`bash tools/deploy.sh` instead of `chmod +x`) or deferred and
+reported.
 
 If the repo has no shipping recipe at all, derive what you can (step 1), do the parts that
 apply, and **say plainly which steps you skipped and why**. Don't invent a deploy.
@@ -188,14 +184,11 @@ git checkout <default-branch> && git pull --ff-only
 - Determine the default branch from `git symbolic-ref refs/remotes/origin/HEAD`, else
   whichever of `main`/`master` exists.
 - **On the default branch with uncommitted work?** Cut `feature/<slug>` first, then commit there.
-- **Stage only intended source changes.** Nothing from `.orchestration/`, no logs, screenshots,
-  `DerivedData/`, build output or temp files. A new-file stray staged? `git rm -r --cached -q
-  <path>` unstages it and keeps the file — only on a path showing `A` in `git status --short`
-  (on a tracked path it stages a deletion; `git add <path>` undoes). A tracked-file stray: this
-  step runs after the deploy, so `git restore --staged <path>` (one prompt) is allowed here.
-  Never commit a stray and delete it in a follow-up commit.
-- **No stray commits on the PR branch** — no "wip", fixup or scratch commits. The PR carries
-  the session's intended commits only (lane commits merged by an integrator are fine).
+- **Stage only intended source changes:** nothing from `.orchestration/`, no logs,
+  screenshots, `DerivedData/` or temp files. Something slipped in? This step is after the
+  deploy, so `git restore --staged <path>` is fine here.
+- **No stray commits on the PR branch:** no "wip", fixup or scratch commits. Lane commits
+  merged by an integrator are fine.
 - **One commit** for the session's work. Subject in the log's existing style
   (`git log --oneline -5`). Body: what changed and why, plus any measured numbers.
 - **PR body:** what changed for the user, the test result (command + pass count), the version
@@ -214,5 +207,5 @@ Don't also invoke `/cmp` — this step *is* that flow.
 
 ## 9. Report
 
-Short. What shipped, what's on the device, the PR link and whether it merged, **anything left
-out of scope** the user needs to weigh in on, and the scratch paths you left (not deleted).
+Short. What shipped, what's on the device, the PR link and whether it merged, and **anything
+left out of scope** the user needs to weigh in on.
